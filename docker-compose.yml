@@ -1,0 +1,79 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: umove_postgres_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: umove_user
+      POSTGRES_PASSWORD: umove_password
+      POSTGRES_DB: umove_db
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - '5432:5432'
+    volumes:
+      - umove_postgres_data:/var/lib/postgresql/data
+    networks:
+      - umove_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U umove_user -d umove_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: umove_redis_cache
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    volumes:
+      - umove_redis_data:/data
+    networks:
+      - umove_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # API Service (Development)
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: umove_api
+    restart: unless-stopped
+    ports:
+      - '3100:4000'
+    environment:
+      NODE_ENV: development
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USERNAME: umove_user
+      DB_PASSWORD: umove_password
+      DB_DATABASE: umove_db
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    volumes:
+      - .:/app
+      - /app/node_modules
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - umove_network
+    command: npm run start:dev
+
+volumes:
+  umove_postgres_data:
+    name: umove_postgres_data
+  umove_redis_data:
+    name: umove_redis_data
+
+networks:
+  umove_network:
+    name: umove_network
+    driver: bridge
