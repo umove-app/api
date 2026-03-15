@@ -107,6 +107,11 @@ export class CreateEmergenciesTable1769123456789 implements MigrationInterface {
                         type: 'timestamp',
                         default: 'CURRENT_TIMESTAMP',
                     },
+                    {
+                        name: 'deletedAt',
+                        type: 'timestamp',
+                        isNullable: true,
+                    },
                 ],
             }),
             true,
