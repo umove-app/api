@@ -52,7 +52,9 @@ export class DatabaseConfig implements TypeOrmOptionsFactory {
       logging: this.configService.get('DB_LOGGING', false),
       migrations: [__dirname + '/../migrations/*{.ts,.js}'],
       migrationsRun: true, // Auto-run migrations on startup
-      ssl: this.configService.get('NODE_ENV') === 'production' ? { rejectUnauthorized: false } : false,
+      ssl: this.configService.get('NODE_ENV') === 'production' || this.configService.get('DB_SSL') === 'true'
+        ? { rejectUnauthorized: false }
+        : false,
     };
   }
 }
