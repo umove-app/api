@@ -23,6 +23,10 @@ async function bootstrap() {
     configService.get('ADMIN_URL'),
     configService.get('MOBILE_WEB_URL'),
     configService.get('EXPO_WEB_URL'),
+    // Comma-separated list of additional allowed origins (e.g. Vercel URLs).
+    ...String(configService.get('CORS_ORIGINS', ''))
+      .split(',')
+      .map((o) => o.trim()),
   ].filter(Boolean) as string[];
   const devOrigins =
     configService.get('NODE_ENV') !== 'production'
@@ -60,6 +64,15 @@ async function bootstrap() {
       }
       // Check against allowed origins
       if (allowedOrigins.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+      // Optionally allow all Vercel deployments (prod + preview) for the admin
+      // app when ALLOW_VERCEL_ORIGINS=true.
+      if (
+        String(configService.get('ALLOW_VERCEL_ORIGINS', '')).toLowerCase() === 'true' &&
+        /^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(origin)
+      ) {
         callback(null, true);
         return;
       }
