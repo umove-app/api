@@ -1,5 +1,5 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe, VersioningType } from '@nestjs/common';
+import { ValidationPipe, VersioningType, RequestMethod } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
@@ -69,9 +69,17 @@ async function bootstrap() {
     credentials: true,
   });
 
-  // Global prefix
+  // Global prefix. Exclude the health routes so they are served at the root
+  // (/, /health, /health/ping) regardless of the API prefix or versioning.
+  // This gives the platform healthcheck a stable, unambiguous path.
   const apiPrefix = configService.get('API_PREFIX', 'api/v1');
-  app.setGlobalPrefix(apiPrefix);
+  app.setGlobalPrefix(apiPrefix, {
+    exclude: [
+      { path: '', method: RequestMethod.GET },
+      { path: 'health', method: RequestMethod.GET },
+      { path: 'health/ping', method: RequestMethod.GET },
+    ],
+  });
 
   // Enable API versioning
   app.enableVersioning({
