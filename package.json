@@ -23,7 +23,11 @@
     "migration:generate": "npm run typeorm -- migration:generate -d src/config/typeorm.config.ts",
     "migration:run": "npm run typeorm -- migration:run -d src/config/typeorm.config.ts",
     "migration:revert": "npm run typeorm -- migration:revert -d src/config/typeorm.config.ts",
-    "seed": "ts-node -r tsconfig-paths/register src/database/seeders/initial-data.seeder.ts"
+    "seed": "ts-node -r tsconfig-paths/register src/database/seeders/initial-data.seeder.ts",
+    "migration:run:prod": "typeorm migration:run -d dist/config/typeorm.config.js",
+    "seed:prod": "node dist/database/seeders/initial-data.seeder.js",
+    "release": "npm run migration:run:prod && npm run seed:prod",
+    "start:prod:release": "npm run release && node dist/main"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.975.0",
@@ -43,6 +47,7 @@
     "bcrypt": "^6.0.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.0",
+    "dotenv": "^16.6.1",
     "firebase-admin": "^12.0.0",
     "nest-winston": "^1.9.4",
     "passport": "^0.7.0",
