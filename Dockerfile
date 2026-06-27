@@ -46,6 +46,7 @@ COPY --from=build /app/package*.json ./
 # Railway sets PORT at runtime; the app reads process.env.PORT.
 EXPOSE 4000
 
-# On boot: run pending migrations, run the idempotent seed, then start the app.
-# Defined as an npm script so the release steps stay in one place.
-CMD ["npm", "run", "start:prod:release"]
+# Start the app only. Migrations and seed are NOT run on deploy — they are
+# applied out-of-band (e.g. `npm run release` / `migration:run:prod` /
+# `seed:prod`) against the target database.
+CMD ["node", "dist/main"]
