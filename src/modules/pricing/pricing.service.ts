@@ -41,15 +41,19 @@ export class PricingService {
     // Get VAT rate
     const vatRate = await this.getVATRate(country);
 
-    // Calculate base pricing
-    const baseFare = vehicle.baseFare;
-    const distanceFare = distance * vehicle.perKmRate;
+    // Calculate base pricing.
+    // NOTE: Postgres `decimal` columns are returned as strings by the driver,
+    // so coerce to numbers before any arithmetic to avoid string concatenation.
+    const baseFare = Number(vehicle.baseFare);
+    const perKmRate = Number(vehicle.perKmRate);
+    const minimumFare = vehicle.minimumFare != null ? Number(vehicle.minimumFare) : 0;
+    const distanceFare = distance * perKmRate;
     const subtotal = baseFare + distanceFare;
 
     // Apply minimum fare if exists
     let finalSubtotal = subtotal;
-    if (vehicle.minimumFare && subtotal < vehicle.minimumFare) {
-      finalSubtotal = vehicle.minimumFare;
+    if (minimumFare && subtotal < minimumFare) {
+      finalSubtotal = minimumFare;
     }
 
     // Calculate VAT

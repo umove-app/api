@@ -5,9 +5,10 @@ import { LocationTrackingController, AdminLocationTrackingController } from './l
 import { DriverLocation } from '../../entities/driver-location.entity';
 import { Order } from '../../entities/order.entity';
 import { DriverProfile } from '../../entities/driver-profile.entity';
+import { RealtimeModule } from '../realtime/realtime.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([DriverLocation, Order, DriverProfile])],
+  imports: [TypeOrmModule.forFeature([DriverLocation, Order, DriverProfile]), RealtimeModule],
   controllers: [LocationTrackingController, AdminLocationTrackingController],
   providers: [LocationTrackingService],
   exports: [LocationTrackingService],

@@ -24,6 +24,8 @@ import { SettingsModule } from './modules/settings/settings.module';
 import { AppRatingsModule } from './modules/app-ratings/app-ratings.module';
 import { LocationTrackingModule } from './modules/location-tracking/location-tracking.module';
 import { EmergenciesModule } from './modules/emergencies/emergencies.module';
+import { RealtimeModule } from './modules/realtime/realtime.module';
+import { DispatchModule } from './modules/dispatch/dispatch.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 
@@ -100,6 +102,8 @@ import { RolesGuard } from './common/guards/roles.guard';
     AppRatingsModule,
     LocationTrackingModule,
     EmergenciesModule,
+    RealtimeModule,
+    DispatchModule,
   ],
   controllers: [AppController],
   providers: [

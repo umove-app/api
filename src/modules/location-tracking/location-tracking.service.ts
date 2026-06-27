@@ -5,6 +5,8 @@ import { DriverLocation } from '../../entities/driver-location.entity';
 import { Order } from '../../entities/order.entity';
 import { DriverProfile } from '../../entities/driver-profile.entity';
 import { OrderStatus, DriverAvailabilityStatus } from '../../common/enums';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
+import { REALTIME_EVENTS } from '../realtime/realtime.events';
 
 export interface TrackLocationDto {
   orderId: string;
@@ -32,6 +34,7 @@ export class LocationTrackingService {
     private orderRepository: Repository<Order>,
     @InjectRepository(DriverProfile)
     private driverProfileRepository: Repository<DriverProfile>,
+    private realtime: RealtimeGateway,
   ) {}
 
   async trackLocation(driverId: string, dto: TrackLocationDto) {
@@ -78,6 +81,18 @@ export class LocationTrackingService {
 
     // Update driver profile last known location
     await this.updateDriverProfileLocation(driverId, dto.latitude, dto.longitude);
+
+    // Broadcast the driver's live position to everyone tracking this order
+    // (the customer's active-trip / en-route screens).
+    this.realtime.emitToOrder(dto.orderId, REALTIME_EVENTS.DRIVER_LOCATION_UPDATE, {
+      orderId: dto.orderId,
+      driverId,
+      latitude: dto.latitude,
+      longitude: dto.longitude,
+      heading: dto.heading,
+      speed: dto.speed,
+      timestamp: new Date().toISOString(),
+    });
 
     return {
       success: true,

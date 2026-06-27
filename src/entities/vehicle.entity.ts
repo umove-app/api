@@ -33,23 +33,37 @@ export class Vehicle extends BaseEntity {
   @Column({ type: 'varchar', length: 20, default: 'kg' })
   capacityUnit: string;
 
-  @Column({ type: 'varchar', length: 255, nullable: true })
+  // Presigned URLs can exceed 1000 chars — use text. The *Key columns hold the
+  // stable S3 keys (presigned on read).
+  @Column({ type: 'text', nullable: true })
   registrationDocument: string;
 
-  @Column({ type: 'varchar', length: 255, nullable: true })
+  @Column({ type: 'varchar', length: 512, nullable: true })
+  registrationDocumentKey: string;
+
+  @Column({ type: 'text', nullable: true })
   insuranceDocument: string;
+
+  @Column({ type: 'varchar', length: 512, nullable: true })
+  insuranceDocumentKey: string;
 
   @Column({ type: 'date', nullable: true })
   insuranceExpiryDate: Date;
 
-  @Column({ type: 'varchar', length: 255, nullable: true })
+  @Column({ type: 'text', nullable: true })
   roadworthinessDocument: string;
+
+  @Column({ type: 'varchar', length: 512, nullable: true })
+  roadworthinessDocumentKey: string;
 
   @Column({ type: 'date', nullable: true })
   roadworthinessExpiryDate: Date;
 
   @Column({ type: 'text', array: true, default: '{}' })
   photos: string[];
+
+  @Column({ type: 'text', array: true, default: '{}' })
+  photoKeys: string[];
 
   @Column({ type: 'boolean', default: false })
   verified: boolean;

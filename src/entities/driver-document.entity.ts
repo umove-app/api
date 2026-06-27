@@ -15,8 +15,15 @@ export class DriverDocument extends BaseEntity {
   })
   documentType: DocumentType;
 
-  @Column({ type: 'varchar', length: 255 })
+  // Holds presigned S3 URLs (with signature/credential query params), which can
+  // exceed 1000 chars — use text rather than a length-capped varchar.
+  @Column({ type: 'text' })
   documentUrl: string;
+
+  // Stable S3 object key. Presigned URLs are generated from this on read so the
+  // stored reference never expires (documentUrl is a convenience/last-signed value).
+  @Column({ type: 'varchar', length: 512, nullable: true })
+  documentKey: string;
 
   @Column({ type: 'varchar', length: 255, nullable: true })
   documentNumber: string;

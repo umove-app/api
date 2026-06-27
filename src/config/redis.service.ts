@@ -55,4 +55,50 @@ export class RedisService {
   async ttl(key: string): Promise<number> {
     return await this.redisClient.ttl(key);
   }
+
+  // ==================== Atomic primitives (dispatch / locking) ====================
+
+  /**
+   * Atomically set `key=value` only if it does not already exist, with an
+   * expiry. Returns true if the caller acquired the key (won the lock).
+   * Used for "first driver to accept wins" order locking.
+   */
+  async setIfNotExists(key: string, value: string, ttlSeconds: number): Promise<boolean> {
+    const result = await this.redisClient.set(key, value, {
+      NX: true,
+      EX: ttlSeconds,
+    });
+    return result === 'OK';
+  }
+
+  /**
+   * Atomically delete `key` only if its current value equals `value`.
+   * Prevents one actor from releasing a lock held by another.
+   */
+  async delIfValueMatches(key: string, value: string): Promise<boolean> {
+    const script =
+      'if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end';
+    const result = (await this.redisClient.eval(script, {
+      keys: [key],
+      arguments: [value],
+    })) as number;
+    return result === 1;
+  }
+
+  /** Add a member to a set with a TTL refresh on the whole set. */
+  async addToSet(key: string, member: string, ttlSeconds?: number): Promise<void> {
+    await this.redisClient.sAdd(key, member);
+    if (ttlSeconds) {
+      await this.redisClient.expire(key, ttlSeconds);
+    }
+  }
+
+  async setMembers(key: string): Promise<string[]> {
+    return (await this.redisClient.sMembers(key)) as string[];
+  }
+
+  /** Flush the current Redis database. Intended for tests / controlled tooling. */
+  async flushDb(): Promise<void> {
+    await this.redisClient.flushDb();
+  }
 }

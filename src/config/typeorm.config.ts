@@ -12,6 +12,9 @@ export default new DataSource({
   database: process.env.DB_DATABASE || 'umove_db',
   entities: [__dirname + '/../**/*.entity{.ts,.js}'],
   migrations: [__dirname + '/../migrations/*{.ts,.js}'],
+  // Per-migration transactions so migrations can opt out of a transaction when
+  // required (e.g. Postgres ALTER TYPE ... ADD VALUE).
+  migrationsTransactionMode: 'each',
   synchronize: false,
   logging: process.env.DB_LOGGING === 'true',
   ssl: process.env.NODE_ENV === 'production' || process.env.DB_SSL === 'true'

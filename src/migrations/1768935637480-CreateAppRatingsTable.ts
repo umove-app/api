@@ -1,6 +1,7 @@
 import { MigrationInterface, QueryRunner, Table, TableIndex, TableForeignKey } from "typeorm";
 
 export class CreateAppRatingsTable1768935637480 implements MigrationInterface {
+    name = 'CreateAppRatingsTable1768935637480';
 
     public async up(queryRunner: QueryRunner): Promise<void> {
         // Create app_ratings table

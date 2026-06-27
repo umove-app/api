@@ -9,11 +9,15 @@ import { Promo } from '../../entities/promo.entity';
 import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
 import { PricingModule } from '../pricing/pricing.module';
+import { DispatchModule } from '../dispatch/dispatch.module';
+import { RealtimeModule } from '../realtime/realtime.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Order, OrderEvent, User, DriverProfile, Vehicle, Promo]),
     PricingModule,
+    DispatchModule,
+    RealtimeModule,
   ],
   controllers: [OrdersController],
   providers: [OrdersService],

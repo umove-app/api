@@ -5,6 +5,8 @@ import { CreateOrderDto } from './dto/create-order.dto';
 import { CancelOrderDto } from './dto/cancel-order.dto';
 import { GetOrdersDto } from './dto/get-orders.dto';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { UserRole } from '../../common/enums';
 
 @ApiTags('orders')
 @Controller('orders')
@@ -43,6 +45,7 @@ export class OrdersController {
   // Driver-specific endpoints
 
   @Get('driver/available')
+  @Roles(UserRole.DRIVER)
   @ApiOperation({ summary: 'Get available orders for driver' })
   @ApiResponse({ status: 200, description: 'Returns available orders nearby' })
   async getAvailableOrders(@CurrentUser() user: any) {
@@ -50,6 +53,7 @@ export class OrdersController {
   }
 
   @Get('driver/my-orders')
+  @Roles(UserRole.DRIVER)
   @ApiOperation({ summary: 'Get driver orders' })
   @ApiResponse({ status: 200, description: 'Returns driver orders' })
   async getDriverOrders(@CurrentUser() user: any, @Query('status') status?: string) {
@@ -57,6 +61,7 @@ export class OrdersController {
   }
 
   @Get('driver/active')
+  @Roles(UserRole.DRIVER)
   @ApiOperation({ summary: 'Get active order for driver' })
   @ApiResponse({ status: 200, description: 'Returns active order' })
   async getActiveOrder(@CurrentUser() user: any) {
@@ -64,6 +69,7 @@ export class OrdersController {
   }
 
   @Post(':id/accept')
+  @Roles(UserRole.DRIVER)
   @ApiOperation({ summary: 'Accept an order as driver' })
   @ApiResponse({ status: 200, description: 'Order accepted successfully' })
   async acceptOrder(@CurrentUser() user: any, @Param('id') id: string) {
@@ -71,6 +77,7 @@ export class OrdersController {
   }
 
   @Post(':id/decline')
+  @Roles(UserRole.DRIVER)
   @ApiOperation({ summary: 'Decline an order as driver' })
   @ApiResponse({ status: 200, description: 'Order declined successfully' })
   async declineOrder(@CurrentUser() user: any, @Param('id') id: string, @Body() body: { reason?: string }) {
@@ -78,6 +85,7 @@ export class OrdersController {
   }
 
   @Patch(':id/status')
+  @Roles(UserRole.DRIVER)
   @ApiOperation({ summary: 'Update order status as driver' })
   @ApiResponse({ status: 200, description: 'Order status updated successfully' })
   async updateOrderStatus(@CurrentUser() user: any, @Param('id') id: string, @Body() body: { status: string }) {

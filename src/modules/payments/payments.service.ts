@@ -10,6 +10,8 @@ import { Order } from '../../entities/order.entity';
 import { OrderEvent } from '../../entities/order-event.entity';
 import { User } from '../../entities/user.entity';
 import { PaymentProvider, PaymentStatus, OrderEventType } from '../../common/enums';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
+import { REALTIME_EVENTS } from '../realtime/realtime.events';
 
 @Injectable()
 export class PaymentsService {
@@ -26,6 +28,7 @@ export class PaymentsService {
     @InjectRepository(User)
     private userRepository: Repository<User>,
     private configService: ConfigService,
+    private realtime: RealtimeGateway,
   ) {
     const stripeKey = this.configService.get<string>('STRIPE_SECRET_KEY');
     if (!stripeKey) {
@@ -154,6 +157,8 @@ export class PaymentsService {
         'SYSTEM',
       );
 
+      await this.emitPaymentSuccess(payment.orderId, payment.reference, Number(payment.amount));
+
       return {
         status: 'success',
         message: 'Payment verified successfully',
@@ -210,6 +215,8 @@ export class PaymentsService {
           'SYSTEM',
         );
 
+        await this.emitPaymentSuccess(payment.orderId, payment.reference, Number(payment.amount));
+
         this.logger.log(`Payment ${payment.reference} marked as successful`);
       }
     }
@@ -252,6 +259,8 @@ export class PaymentsService {
           'Payment completed via webhook',
           'SYSTEM',
         );
+
+        await this.emitPaymentSuccess(payment.orderId, payment.reference, Number(payment.amount));
 
         this.logger.log(`Payment ${payment.reference} marked as successful`);
       }
@@ -405,5 +414,21 @@ export class PaymentsService {
       performedBy,
     });
     await this.orderEventRepository.save(event);
+  }
+
+  /**
+   * Notify the customer and driver in real time that an order's payment
+   * succeeded so both apps can update without polling.
+   */
+  private async emitPaymentSuccess(orderId: string, reference: string, amount: number) {
+    const order = await this.orderRepository.findOne({ where: { id: orderId } });
+    const payload = { orderId, reference, amount };
+    this.realtime.emitToOrder(orderId, REALTIME_EVENTS.PAYMENT_SUCCESS, payload);
+    if (order?.customerId) {
+      this.realtime.emitToUser(order.customerId, REALTIME_EVENTS.PAYMENT_SUCCESS, payload);
+    }
+    if (order?.driverId) {
+      this.realtime.emitToUser(order.driverId, REALTIME_EVENTS.PAYMENT_SUCCESS, payload);
+    }
   }
 }

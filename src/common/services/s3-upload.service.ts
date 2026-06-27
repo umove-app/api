@@ -65,17 +65,22 @@ export class S3UploadService {
             const extension = this.getExtensionFromContentType(contentType);
             const key = `${folder}/${fileName || uuidv4()}.${extension}`;
 
+            // NOTE: No ACL is set. Buckets with Object Ownership set to
+            // "Bucket owner enforced" (the AWS default since 2023) reject any
+            // request that includes an ACL with 400 AccessControlListNotSupported.
+            // Access is granted via presigned URLs instead.
             const command = new PutObjectCommand({
                 Bucket: this.bucket,
                 Key: key,
                 Body: fileBuffer,
                 ContentType: contentType,
-                ACL: 'public-read',
             });
 
             await this.s3Client.send(command);
 
-            const url = `https://${this.bucket}.s3.${this.region}.amazonaws.com/${key}`;
+            // Return a presigned GET URL so the (private) object remains
+            // accessible to the app without requiring public-read ACLs.
+            const url = await this.getSignedUrl(key);
 
             this.logger.log(`File uploaded successfully: ${key}`);
 
@@ -87,6 +92,23 @@ export class S3UploadService {
         } catch (error) {
             this.logger.error('Failed to upload file to S3:', error);
             throw error;
+        }
+    }
+
+    /**
+     * Generate a fresh presigned GET URL for a stored S3 key, or null if no key.
+     * Use this at READ time so persisted (private) objects remain accessible
+     * without the URL ever going permanently stale.
+     */
+    async signKey(key?: string | null, expiresIn: number = 3600): Promise<string | null> {
+        if (!key) {
+            return null;
+        }
+        try {
+            return await this.getSignedUrl(key, expiresIn);
+        } catch (error) {
+            this.logger.error(`Failed to sign key ${key}:`, error);
+            return null;
         }
     }
 

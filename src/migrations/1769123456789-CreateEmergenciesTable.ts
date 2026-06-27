@@ -1,6 +1,7 @@
 import { MigrationInterface, QueryRunner, Table, TableIndex, TableForeignKey } from "typeorm";
 
 export class CreateEmergenciesTable1769123456789 implements MigrationInterface {
+    name = 'CreateEmergenciesTable1769123456789';
 
     public async up(queryRunner: QueryRunner): Promise<void> {
         // Create emergencies table

@@ -18,6 +18,8 @@ export enum OrderStatus {
 export enum OrderType {
   MOVE_TRANSPORT = 'MOVE_TRANSPORT',
   PARCEL_DELIVERY = 'PARCEL_DELIVERY',
+  PASSENGER = 'PASSENGER',
+  GOODS = 'GOODS',
 }
 
 export enum OrderEventType {

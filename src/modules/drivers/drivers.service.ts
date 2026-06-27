@@ -251,35 +251,37 @@ export class DriversService {
 
     const [drivers, total] = await query.getManyAndCount();
 
-    // Transform the response to match frontend expectations
-    const transformedData = drivers.map(driver => {
-      // Extract document URLs from documents array
-      const licenseDoc = driver.documents?.find(doc => doc.documentType === 'DRIVERS_LICENSE');
-      const vehicleRegDoc = driver.documents?.find(doc => doc.documentType === 'VEHICLE_REGISTRATION');
-      const insuranceDoc = driver.documents?.find(doc => doc.documentType === 'VEHICLE_INSURANCE');
+    // Transform the response to match frontend expectations (sign URLs on read).
+    const transformedData = await Promise.all(
+      drivers.map(async (driver) => {
+        // Extract document URLs from documents array
+        const licenseDoc = driver.documents?.find(doc => doc.documentType === 'DRIVERS_LICENSE');
+        const vehicleRegDoc = driver.documents?.find(doc => doc.documentType === 'VEHICLE_REGISTRATION');
+        const insuranceDoc = driver.documents?.find(doc => doc.documentType === 'VEHICLE_INSURANCE');
 
-      // Create the driverProfile object
-      const driverProfile = {
-        userId: driver.userId,
-        licenseNumber: driver.licenseNumber,
-        licenseUrl: licenseDoc?.documentUrl || null,
-        vehicleRegistrationUrl: vehicleRegDoc?.documentUrl || null,
-        insuranceUrl: insuranceDoc?.documentUrl || null,
-        verificationStatus: driver.verificationStatus, // Uses the getter that maps APPROVED -> VERIFIED
-        isOnline: driver.isOnline, // Uses the getter that checks availabilityStatus
-        lastKnownLatitude: driver.lastKnownLatitude,
-        lastKnownLongitude: driver.lastKnownLongitude,
-        lastLocationUpdate: driver.lastLocationUpdate,
-        rejectionReason: driver.rejectionReason,
-        vehicle: driver.vehicle, // Uses the getter that returns vehicles[0]
-      };
+        // Create the driverProfile object
+        const driverProfile = {
+          userId: driver.userId,
+          licenseNumber: driver.licenseNumber,
+          licenseUrl: await this.signDocUrl(licenseDoc),
+          vehicleRegistrationUrl: await this.signDocUrl(vehicleRegDoc),
+          insuranceUrl: await this.signDocUrl(insuranceDoc),
+          verificationStatus: driver.verificationStatus, // Uses the getter that maps APPROVED -> VERIFIED
+          isOnline: driver.isOnline, // Uses the getter that checks availabilityStatus
+          lastKnownLatitude: driver.lastKnownLatitude,
+          lastKnownLongitude: driver.lastKnownLongitude,
+          lastLocationUpdate: driver.lastLocationUpdate,
+          rejectionReason: driver.rejectionReason,
+          vehicle: await this.signVehicleUrls(driver.vehicle), // Uses the getter that returns vehicles[0]
+        };
 
-      // Return user object with nested driverProfile (matching frontend User interface)
-      return {
-        ...driver.user,
-        driverProfile,
-      };
-    });
+        // Return user object with nested driverProfile (matching frontend User interface)
+        return {
+          ...driver.user,
+          driverProfile,
+        };
+      }),
+    );
 
     return {
       data: transformedData,
@@ -307,20 +309,20 @@ export class DriversService {
     const vehicleRegDoc = driver.documents?.find(doc => doc.documentType === 'VEHICLE_REGISTRATION');
     const insuranceDoc = driver.documents?.find(doc => doc.documentType === 'VEHICLE_INSURANCE');
 
-    // Create the driverProfile object
+    // Create the driverProfile object (sign document URLs on read).
     const driverProfile = {
       userId: driver.userId,
       licenseNumber: driver.licenseNumber,
-      licenseUrl: licenseDoc?.documentUrl || null,
-      vehicleRegistrationUrl: vehicleRegDoc?.documentUrl || null,
-      insuranceUrl: insuranceDoc?.documentUrl || null,
+      licenseUrl: await this.signDocUrl(licenseDoc),
+      vehicleRegistrationUrl: await this.signDocUrl(vehicleRegDoc),
+      insuranceUrl: await this.signDocUrl(insuranceDoc),
       verificationStatus: driver.verificationStatus,
       isOnline: driver.isOnline,
       lastKnownLatitude: driver.lastKnownLatitude,
       lastKnownLongitude: driver.lastKnownLongitude,
       lastLocationUpdate: driver.lastLocationUpdate,
       rejectionReason: driver.rejectionReason,
-      vehicle: driver.vehicle,
+      vehicle: await this.signVehicleUrls(driver.vehicle),
     };
 
     // Return user object with nested driverProfile
@@ -328,6 +330,55 @@ export class DriversService {
       ...driver.user,
       driverProfile,
     };
+  }
+
+  /** Sign a single document's stored key into a fresh presigned URL (or null). */
+  private async signDocUrl(doc?: DriverDocument | null): Promise<string | null> {
+    if (!doc) {
+      return null;
+    }
+    if (doc.documentKey) {
+      return this.s3UploadService.signKey(doc.documentKey);
+    }
+    // Legacy rows uploaded before keys were stored: fall back to the stored URL.
+    return doc.documentUrl || null;
+  }
+
+  /**
+   * Return a copy of a vehicle with its document/photo URLs freshly presigned
+   * from the stored S3 keys. Legacy rows without keys keep their stored URLs.
+   */
+  private async signVehicleUrls(vehicle?: Vehicle | null): Promise<Vehicle | null | undefined> {
+    if (!vehicle) {
+      return vehicle;
+    }
+
+    const signed: Vehicle = { ...vehicle } as Vehicle;
+
+    if (vehicle.registrationDocumentKey) {
+      signed.registrationDocument =
+        (await this.s3UploadService.signKey(vehicle.registrationDocumentKey)) ||
+        vehicle.registrationDocument;
+    }
+    if (vehicle.insuranceDocumentKey) {
+      signed.insuranceDocument =
+        (await this.s3UploadService.signKey(vehicle.insuranceDocumentKey)) ||
+        vehicle.insuranceDocument;
+    }
+    if (vehicle.roadworthinessDocumentKey) {
+      signed.roadworthinessDocument =
+        (await this.s3UploadService.signKey(vehicle.roadworthinessDocumentKey)) ||
+        vehicle.roadworthinessDocument;
+    }
+    if (vehicle.photoKeys && vehicle.photoKeys.length > 0) {
+      signed.photos = await Promise.all(
+        vehicle.photoKeys.map(async (key, i) =>
+          (await this.s3UploadService.signKey(key)) || vehicle.photos?.[i] || '',
+        ),
+      );
+    }
+
+    return signed;
   }
 
   async verifyDriver(driverId: string, approvedBy: string) {
@@ -483,6 +534,7 @@ export class DriversService {
     if (existingDoc) {
       // Update existing document
       existingDoc.documentUrl = uploadResult.url;
+      existingDoc.documentKey = uploadResult.key;
       existingDoc.documentNumber = dto.documentNumber || existingDoc.documentNumber;
       existingDoc.expiryDate = dto.expiryDate ? new Date(dto.expiryDate) : existingDoc.expiryDate;
       existingDoc.verified = false; // Reset verification
@@ -490,7 +542,7 @@ export class DriversService {
       existingDoc.verifiedBy = null as any;
 
       await this.driverDocumentRepository.save(existingDoc);
-      return existingDoc;
+      return this.withSignedDocumentUrl(existingDoc);
     }
 
     // Create new document
@@ -498,6 +550,7 @@ export class DriversService {
       driverId: driver.id,
       documentType: dto.documentType,
       documentUrl: uploadResult.url,
+      documentKey: uploadResult.key,
       documentNumber: dto.documentNumber,
       expiryDate: dto.expiryDate ? new Date(dto.expiryDate) : undefined,
       verified: false,
@@ -511,6 +564,17 @@ export class DriversService {
       await this.driverProfileRepository.save(driver);
     }
 
+    return this.withSignedDocumentUrl(document);
+  }
+
+  /** Replace a document's stored URL with a freshly-signed presigned URL. */
+  private async withSignedDocumentUrl(document: DriverDocument): Promise<DriverDocument> {
+    if (document.documentKey) {
+      const signed = await this.s3UploadService.signKey(document.documentKey);
+      if (signed) {
+        document.documentUrl = signed;
+      }
+    }
     return document;
   }
 
@@ -521,10 +585,13 @@ export class DriversService {
       return [];
     }
 
-    return this.driverDocumentRepository.find({
+    const documents = await this.driverDocumentRepository.find({
       where: { driverId: driver.id },
       order: { createdAt: 'DESC' },
     });
+
+    // Sign each document's URL on read so links never go stale.
+    return Promise.all(documents.map((doc) => this.withSignedDocumentUrl(doc)));
   }
 
   async deleteDocument(userId: string, documentId: string) {
@@ -573,8 +640,9 @@ export class DriversService {
       throw new ConflictException('Vehicle with this plate number already exists');
     }
 
-    // Upload photos to S3
+    // Upload photos to S3 (store both the presigned url and the stable key).
     const photoUrls: string[] = [];
+    const photoKeys: string[] = [];
     if (dto.photos && dto.photos.length > 0) {
       for (const photoData of dto.photos) {
         const result = await this.s3UploadService.uploadVehiclePhoto(
@@ -584,13 +652,17 @@ export class DriversService {
           'image/jpeg',
         );
         photoUrls.push(result.url);
+        photoKeys.push(result.key);
       }
     }
 
     // Upload documents to S3
     let registrationUrl: string | null = null;
+    let registrationKey: string | null = null;
     let insuranceUrl: string | null = null;
+    let insuranceKey: string | null = null;
     let roadworthinessUrl: string | null = null;
+    let roadworthinessKey: string | null = null;
 
     if (dto.registrationDocument) {
       const result = await this.s3UploadService.uploadDriverDocument(
@@ -600,6 +672,7 @@ export class DriversService {
         'image/jpeg',
       );
       registrationUrl = result.url;
+      registrationKey = result.key;
     }
 
     if (dto.insuranceDocument) {
@@ -610,6 +683,7 @@ export class DriversService {
         'image/jpeg',
       );
       insuranceUrl = result.url;
+      insuranceKey = result.key;
     }
 
     if (dto.roadworthinessDocument) {
@@ -620,6 +694,7 @@ export class DriversService {
         'image/jpeg',
       );
       roadworthinessUrl = result.url;
+      roadworthinessKey = result.key;
     }
 
     // Create vehicle
@@ -634,15 +709,19 @@ export class DriversService {
       capacity: dto.capacity || 200,
       capacityUnit: dto.capacityUnit || 'kg',
       photos: photoUrls,
+      photoKeys,
       registrationDocument: registrationUrl,
+      registrationDocumentKey: registrationKey,
       insuranceDocument: insuranceUrl,
+      insuranceDocumentKey: insuranceKey,
       insuranceExpiryDate: dto.insuranceExpiryDate ? new Date(dto.insuranceExpiryDate) : undefined,
       roadworthinessDocument: roadworthinessUrl,
+      roadworthinessDocumentKey: roadworthinessKey,
       roadworthinessExpiryDate: dto.roadworthinessExpiryDate ? new Date(dto.roadworthinessExpiryDate) : undefined,
       verified: false,
       active: true,
     };
-    const vehicle = this.vehicleRepository.create(vehicleData as any);
+    const vehicle = this.vehicleRepository.create(vehicleData as any) as unknown as Vehicle;
 
     await this.vehicleRepository.save(vehicle);
 
@@ -652,7 +731,7 @@ export class DriversService {
       await this.driverProfileRepository.save(driver);
     }
 
-    return vehicle;
+    return this.signVehicleUrls(vehicle);
   }
 
   async getDriverVehicles(userId: string) {
@@ -662,10 +741,12 @@ export class DriversService {
       return [];
     }
 
-    return this.vehicleRepository.find({
+    const vehicles = await this.vehicleRepository.find({
       where: { driverId: driver.id },
       order: { createdAt: 'DESC' },
     });
+
+    return Promise.all(vehicles.map((v) => this.signVehicleUrls(v)));
   }
 
   async updateVehicle(userId: string, vehicleId: string, dto: UpdateVehicleDto) {
@@ -692,9 +773,10 @@ export class DriversService {
     if (dto.capacity) vehicle.capacity = dto.capacity;
     if (dto.capacityUnit) vehicle.capacityUnit = dto.capacityUnit;
 
-    // Upload new photos if provided
+    // Upload new photos if provided (store url + stable key).
     if (dto.photos && dto.photos.length > 0) {
       const photoUrls: string[] = [];
+      const photoKeys: string[] = [];
       for (const photoData of dto.photos) {
         const result = await this.s3UploadService.uploadVehiclePhoto(
           userId,
@@ -703,8 +785,10 @@ export class DriversService {
           'image/jpeg',
         );
         photoUrls.push(result.url);
+        photoKeys.push(result.key);
       }
       vehicle.photos = photoUrls;
+      vehicle.photoKeys = photoKeys;
     }
 
     // Reset verification if substantial changes made
@@ -713,7 +797,7 @@ export class DriversService {
     vehicle.verifiedBy = null as any;
 
     await this.vehicleRepository.save(vehicle);
-    return vehicle;
+    return this.signVehicleUrls(vehicle);
   }
 
   async deleteVehicle(userId: string, vehicleId: string) {
@@ -767,6 +851,14 @@ export class DriversService {
     const vehicleCompleted = driver.vehicles && driver.vehicles.length > 0;
     const canGoOnline = driver.kycStatus === DriverKycStatus.APPROVED;
 
+    // Sign document + vehicle URLs on read so links never go stale.
+    const signedDocuments = await Promise.all(
+      (driver.documents || []).map((doc) => this.withSignedDocumentUrl(doc)),
+    );
+    const signedVehicles = await Promise.all(
+      (driver.vehicles || []).map((v) => this.signVehicleUrls(v)),
+    );
+
     return {
       hasProfile: true,
       kycStatus: driver.kycStatus,
@@ -774,8 +866,8 @@ export class DriversService {
       documentsCompleted,
       vehicleCompleted,
       requiredDocuments: requiredDocTypes,
-      submittedDocuments: driver.documents || [],
-      vehicles: driver.vehicles || [],
+      submittedDocuments: signedDocuments,
+      vehicles: signedVehicles,
       canGoOnline,
       rejectionReason: driver.rejectionReason,
     };

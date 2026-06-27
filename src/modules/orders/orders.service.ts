@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Order } from '../../entities/order.entity';
@@ -12,6 +12,9 @@ import { CreateOrderDto } from './dto/create-order.dto';
 import { CancelOrderDto } from './dto/cancel-order.dto';
 import { GetOrdersDto } from './dto/get-orders.dto';
 import { OrderStatus, OrderEventType, DriverAvailabilityStatus, UserRole } from '../../common/enums';
+import { DispatchService } from '../dispatch/dispatch.service';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
+import { REALTIME_EVENTS } from '../realtime/realtime.events';
 
 @Injectable()
 export class OrdersService {
@@ -29,6 +32,8 @@ export class OrdersService {
     @InjectRepository(Promo)
     private promoRepository: Repository<Promo>,
     private pricingService: PricingService,
+    private dispatchService: DispatchService,
+    private realtime: RealtimeGateway,
   ) {}
 
   async createOrder(userId: string, dto: CreateOrderDto) {
@@ -82,16 +87,22 @@ export class OrdersService {
     // Create order event
     await this.createOrderEvent(savedOrder.id, OrderEventType.CREATED, 'Order created', userId);
 
-    // Auto-assign driver if not scheduled and preferred driver not specified
-    if (!dto.scheduledAt && !dto.preferredDriverId) {
-      await this.autoAssignDriver(savedOrder.id);
-    } else if (dto.preferredDriverId) {
-      await this.assignDriver(savedOrder.id, dto.preferredDriverId, userId);
-    }
-
     // Update promo usage if applied
     if (dto.promoCode) {
       await this.incrementPromoUsage(dto.promoCode);
+    }
+
+    // Dispatch:
+    //  - preferred driver: direct assignment + offer.
+    //  - scheduled order: dispatch is deferred (handled when due); skip for now.
+    //  - otherwise: hand off to the dispatch engine (expanding-radius offers).
+    if (dto.preferredDriverId) {
+      await this.assignDriver(savedOrder.id, dto.preferredDriverId, userId);
+    } else if (!dto.scheduledAt) {
+      // Fire-and-forget: dispatch proceeds asynchronously via realtime offers.
+      this.dispatchService
+        .dispatchOrder(savedOrder.id)
+        .catch((err) => console.error('dispatchOrder failed', err));
     }
 
     return this.getOrderById(savedOrder.id, userId);
@@ -170,53 +181,30 @@ export class OrdersService {
     // Create event
     await this.createOrderEvent(orderId, OrderEventType.CANCELLED, `Order cancelled: ${dto.reason}`, userId);
 
-    // Update driver availability if assigned
+    // Stop any in-flight dispatch for this order.
+    await this.dispatchService.cancelDispatch(orderId);
+
+    // Update driver availability if assigned, and notify the driver in real time.
     if (order.driverId) {
       await this.updateDriverAvailability(order.driverId, DriverAvailabilityStatus.ONLINE);
+      this.realtime.emitToUser(order.driverId, REALTIME_EVENTS.ORDER_CANCELLED, {
+        orderId,
+        reason: dto.reason,
+      });
     }
+    this.realtime.emitToOrder(orderId, REALTIME_EVENTS.ORDER_CANCELLED, {
+      orderId,
+      reason: dto.reason,
+    });
 
     return this.getOrderById(orderId, userId);
   }
 
-  private async autoAssignDriver(orderId: string) {
-    const order = await this.orderRepository.findOne({ where: { id: orderId } });
-    if (!order) return;
-
-    // Find nearest available driver with matching vehicle type
-    const drivers = await this.driverProfileRepository
-      .createQueryBuilder('dp')
-      .select(['dp.id', 'dp.userId', 'dp.lastKnownLatitude', 'dp.lastKnownLongitude'])
-      .addSelect(
-        `(6371 * acos(cos(radians(:pickupLat)) * cos(radians(dp.lastKnownLatitude)) * cos(radians(dp.lastKnownLongitude) - radians(:pickupLng)) + sin(radians(:pickupLat)) * sin(radians(dp.lastKnownLatitude))))`,
-        'distance',
-      )
-      .where('dp.availabilityStatus = :status', { status: DriverAvailabilityStatus.ONLINE })
-      .andWhere('dp.kycStatus = :kycStatus', { kycStatus: 'APPROVED' })
-      .andWhere('dp.lastKnownLatitude IS NOT NULL')
-      .andWhere('dp.lastKnownLongitude IS NOT NULL')
-      .having('distance <= :radius', { radius: 10 })
-      .setParameters({ pickupLat: order.pickupLatitude, pickupLng: order.pickupLongitude })
-      .orderBy('distance', 'ASC')
-      .limit(1)
-      .getRawOne();
-
-    if (drivers) {
-      // Get vehicle for this driver
-      const vehicle = await this.vehicleRepository.findOne({
-        where: {
-          driverId: drivers.dp_id,
-          type: order.vehicleType,
-          active: true,
-          verified: true,
-        },
-      });
-
-      if (vehicle) {
-        await this.assignDriver(orderId, drivers.dp_userId, 'SYSTEM');
-      }
-    }
-  }
-
+  /**
+   * Directly assign a specific (preferred) driver to an order and immediately
+   * offer it to them via the dispatch engine. General auto-dispatch is handled
+   * by DispatchService (expanding-radius offers), not here.
+   */
   private async assignDriver(orderId: string, driverId: string, assignedBy: string) {
     const order = await this.orderRepository.findOne({ where: { id: orderId } });
     if (!order) return;
@@ -234,18 +222,20 @@ export class OrdersService {
       throw new BadRequestException('Driver does not have a matching vehicle');
     }
 
-    order.driverId = driverId;
-    order.vehicleId = vehicle.id;
     order.status = OrderStatus.DRIVER_ASSIGNED;
     order.assignedAt = new Date();
-
+    // Note: driver is NOT set ON_TRIP and the order's driverId is left null
+    // until the driver actually accepts; we only pre-target the preferred driver.
     await this.orderRepository.save(order);
-
-    // Update driver status
-    await this.updateDriverAvailability(driverId, DriverAvailabilityStatus.ON_TRIP);
 
     // Create event
     await this.createOrderEvent(orderId, OrderEventType.DRIVER_ASSIGNED, 'Driver assigned to order', assignedBy);
+
+    // Offer the order directly to the preferred driver via the dispatch engine,
+    // which still applies the atomic accept lock and offer timeout.
+    this.dispatchService
+      .dispatchOrder(orderId)
+      .catch((err) => console.error('preferred dispatchOrder failed', err));
   }
 
   private async createOrderEvent(orderId: string, eventType: OrderEventType, message: string, performedBy: string) {
@@ -367,13 +357,36 @@ export class OrdersService {
       throw new BadRequestException('You do not have a matching vehicle for this order');
     }
 
-    // Accept the order
-    order.driverId = driverId;
-    order.vehicleId = vehicle.id;
-    order.status = OrderStatus.ACCEPTED;
-    order.acceptedAt = new Date();
+    // ATOMIC ACCEPT: only the first driver to acquire the Redis lock wins.
+    // This eliminates the double-accept race entirely.
+    const won = await this.dispatchService.acquireAcceptLock(orderId, driverId);
+    if (!won) {
+      throw new ConflictException('This order has already been taken by another driver');
+    }
 
-    await this.orderRepository.save(order);
+    try {
+      // Re-read inside the lock and re-validate the order is still assignable.
+      const fresh = await this.orderRepository.findOne({ where: { id: orderId } });
+      if (
+        !fresh ||
+        (fresh.status !== OrderStatus.CREATED && fresh.status !== OrderStatus.DRIVER_ASSIGNED) ||
+        (fresh.driverId && fresh.driverId !== driverId)
+      ) {
+        await this.dispatchService.releaseAcceptLock(orderId, driverId);
+        throw new ConflictException('This order has already been taken by another driver');
+      }
+
+      fresh.driverId = driverId;
+      fresh.vehicleId = vehicle.id;
+      fresh.status = OrderStatus.ACCEPTED;
+      fresh.acceptedAt = new Date();
+      await this.orderRepository.save(fresh);
+    } catch (error) {
+      if (!(error instanceof ConflictException)) {
+        await this.dispatchService.releaseAcceptLock(orderId, driverId);
+      }
+      throw error;
+    }
 
     // Update driver availability
     await this.updateDriverAvailability(driverId, DriverAvailabilityStatus.ON_TRIP);
@@ -381,7 +394,29 @@ export class OrdersService {
     // Create event
     await this.createOrderEvent(orderId, OrderEventType.DRIVER_ACCEPTED, 'Driver accepted the order', driverId);
 
-    return this.getOrderById(orderId, driverId);
+    // Clear dispatch state (stops offer rollover, clears offered-set).
+    await this.dispatchService.finalizeAssignment(orderId);
+
+    const result = await this.getOrderById(orderId, driverId);
+
+    // Notify the customer in real time that a driver accepted.
+    this.realtime.emitToUser(order.customerId, REALTIME_EVENTS.ORDER_ACCEPTED, {
+      orderId,
+      order: result,
+      driver: result.driver
+        ? {
+            id: result.driver.id,
+            name: result.driver.name,
+            phone: result.driver.phoneNumber || result.driver.phone,
+          }
+        : null,
+    });
+    this.realtime.emitToOrder(orderId, REALTIME_EVENTS.ORDER_STATUS, {
+      orderId,
+      status: OrderStatus.ACCEPTED,
+    });
+
+    return result;
   }
 
   async declineOrder(orderId: string, driverId: string, reason?: string) {
@@ -392,14 +427,11 @@ export class OrdersService {
     }
 
     if (order.driverId === driverId) {
-      // If driver was assigned, clear assignment
+      // If driver was assigned, clear assignment so it can be re-dispatched.
       order.driverId = null;
       order.vehicleId = null;
       order.status = OrderStatus.CREATED;
       await this.orderRepository.save(order);
-
-      // Try to auto-assign another driver
-      await this.autoAssignDriver(orderId);
     }
 
     // Create event
@@ -409,6 +441,9 @@ export class OrdersService {
       `Driver declined: ${reason || 'No reason provided'}`,
       driverId,
     );
+
+    // Roll the dispatch to the next-nearest candidate driver.
+    await this.dispatchService.onDriverDeclined(orderId, driverId);
 
     return { success: true, message: 'Order declined' };
   }
@@ -463,10 +498,75 @@ export class OrdersService {
     order.status = status;
     await this.orderRepository.save(order);
 
-    // Create event
-    await this.createOrderEvent(orderId, status as unknown as OrderEventType, eventMessage, driverId);
+    // Create event using a valid OrderEventType (the event enum does not have
+    // 1:1 parity with OrderStatus, e.g. there is no EN_ROUTE_* event type).
+    await this.createOrderEvent(
+      orderId,
+      this.statusToEventType(status),
+      eventMessage,
+      driverId,
+    );
 
-    return this.getOrderById(orderId, driverId);
+    const result = await this.getOrderById(orderId, driverId);
+
+    // Broadcast the status change in real time to the customer + order room.
+    this.emitOrderStatus(order.customerId, orderId, status, result);
+
+    return result;
+  }
+
+  /** Map an OrderStatus to the closest valid OrderEventType for the audit log. */
+  private statusToEventType(status: OrderStatus): OrderEventType {
+    switch (status) {
+      case OrderStatus.EN_ROUTE_TO_PICKUP:
+        return OrderEventType.DRIVER_ACCEPTED;
+      case OrderStatus.ARRIVED_AT_PICKUP:
+        return OrderEventType.ARRIVED_AT_PICKUP;
+      case OrderStatus.PICKED_UP:
+        return OrderEventType.PICKED_UP;
+      case OrderStatus.STARTED:
+        return OrderEventType.STARTED;
+      case OrderStatus.EN_ROUTE_TO_DROPOFF:
+        return OrderEventType.STARTED;
+      case OrderStatus.DELIVERED:
+        return OrderEventType.DELIVERED;
+      case OrderStatus.COMPLETED:
+        return OrderEventType.COMPLETED;
+      case OrderStatus.CANCELLED:
+        return OrderEventType.CANCELLED;
+      default:
+        return OrderEventType.STARTED;
+    }
+  }
+
+  /**
+   * Emit a realtime status change. Emits both a specific lifecycle event (so
+   * existing client listeners fire) and a generic order:status event.
+   */
+  private emitOrderStatus(
+    customerId: string,
+    orderId: string,
+    status: OrderStatus,
+    order: Order,
+  ): void {
+    const specific: Partial<Record<OrderStatus, string>> = {
+      [OrderStatus.EN_ROUTE_TO_PICKUP]: REALTIME_EVENTS.ORDER_STARTED,
+      [OrderStatus.ARRIVED_AT_PICKUP]: REALTIME_EVENTS.ORDER_ARRIVED,
+      [OrderStatus.PICKED_UP]: REALTIME_EVENTS.ORDER_STARTED,
+      [OrderStatus.STARTED]: REALTIME_EVENTS.ORDER_STARTED,
+      [OrderStatus.EN_ROUTE_TO_DROPOFF]: REALTIME_EVENTS.ORDER_STARTED,
+      [OrderStatus.DELIVERED]: REALTIME_EVENTS.ORDER_COMPLETED,
+      [OrderStatus.COMPLETED]: REALTIME_EVENTS.ORDER_COMPLETED,
+    };
+
+    const payload = { orderId, status, order };
+    const specificEvent = specific[status];
+    if (specificEvent) {
+      this.realtime.emitToUser(customerId, specificEvent, payload);
+      this.realtime.emitToOrder(orderId, specificEvent, payload);
+    }
+    this.realtime.emitToUser(customerId, REALTIME_EVENTS.ORDER_STATUS, payload);
+    this.realtime.emitToOrder(orderId, REALTIME_EVENTS.ORDER_STATUS, payload);
   }
 
   private async updateDriverStats(driverId: string, order: Order) {
