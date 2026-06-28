@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, LessThanOrEqual } from 'typeorm';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { Order } from '../../entities/order.entity';
 import { OrderEvent } from '../../entities/order-event.entity';
 import { User } from '../../entities/user.entity';
@@ -605,6 +606,47 @@ export class OrdersService {
       // Recalculate rating if needed
       // This would typically involve fetching all reviews and calculating average
       await this.driverProfileRepository.save(driverProfile);
+    }
+  }
+
+  /**
+   * Dispatch scheduled orders that are now due.
+   *
+   * Runs every minute. A scheduled order is dispatched once its scheduledAt time
+   * has passed, it has no driver yet, it is still in a dispatchable state, and
+   * (for PREPAID orders) it has been paid. PAY_ON_DELIVERY scheduled orders are
+   * dispatched without requiring payment.
+   */
+  @Cron(CronExpression.EVERY_MINUTE)
+  async dispatchDueScheduledOrders() {
+    const now = new Date();
+    const dueOrders = await this.orderRepository.find({
+      where: {
+        isScheduled: true,
+        scheduledAt: LessThanOrEqual(now),
+        status: OrderStatus.CREATED,
+      },
+    });
+
+    for (const order of dueOrders) {
+      if (order.driverId) {
+        continue;
+      }
+      // PREPAID scheduled orders must be paid before they go out.
+      if (order.paymentMode === OrderPaymentMode.PREPAID && !order.isPaid) {
+        continue;
+      }
+
+      // Mark it no longer "pending schedule" so it isn't picked up again, then
+      // hand off to the dispatch engine.
+      order.isScheduled = false;
+      await this.orderRepository.save(order);
+
+      this.dispatchService
+        .dispatchOrder(order.id)
+        .catch((err) =>
+          console.error(`Scheduled dispatch failed for order ${order.id}: ${err.message}`),
+        );
     }
   }
 }

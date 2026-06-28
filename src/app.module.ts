@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ThrottlerModule } from '@nestjs/throttler';
+import { ScheduleModule } from '@nestjs/schedule';
 import { WinstonModule } from 'nest-winston';
 import { APP_GUARD } from '@nestjs/core';
 import * as winston from 'winston';
@@ -31,6 +32,8 @@ import { RolesGuard } from './common/guards/roles.guard';
 
 @Module({
   imports: [
+    // Cron scheduling (used to dispatch scheduled orders when they become due)
+    ScheduleModule.forRoot(),
     // Configuration
     ConfigModule.forRoot({
       isGlobal: true,
