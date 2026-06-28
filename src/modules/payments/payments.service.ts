@@ -156,7 +156,7 @@ export class PaymentsService {
         payment.orderId,
         OrderEventType.PAYMENT_SUCCESS,
         'Payment completed successfully',
-        'SYSTEM',
+        null,
       );
 
       // Mark the order paid and, for PREPAID orders that were held awaiting
@@ -195,7 +195,7 @@ export class PaymentsService {
         payment.orderId,
         OrderEventType.PAYMENT_FAILED,
         'Payment verification failed',
-        'SYSTEM',
+        null,
       );
 
       throw new BadRequestException('Payment verification failed');
@@ -232,7 +232,7 @@ export class PaymentsService {
           payment.orderId,
           OrderEventType.PAYMENT_SUCCESS,
           'Payment completed via webhook',
-          'SYSTEM',
+          null,
         );
 
         await this.emitPaymentSuccess(payment.orderId, payment.reference, Number(payment.amount));
@@ -277,7 +277,7 @@ export class PaymentsService {
           payment.orderId,
           OrderEventType.PAYMENT_SUCCESS,
           'Payment completed via webhook',
-          'SYSTEM',
+          null,
         );
 
         await this.emitPaymentSuccess(payment.orderId, payment.reference, Number(payment.amount));
@@ -373,7 +373,10 @@ export class PaymentsService {
   }
 
   private async verifyPaystackPayment(reference: string): Promise<boolean> {
-    const paystackSecretKey = this.configService.get<string>('PAYSTACK_SECRET_KEY');
+    const paystackSecretKey = this.configService
+      .get<string>('PAYSTACK_SECRET_KEY', '')
+      .trim()
+      .replace(/^["']|["']$/g, '');
 
     try {
       const response = await axios.get(
@@ -442,12 +445,20 @@ export class PaymentsService {
     }
   }
 
-  private async createOrderEvent(orderId: string, eventType: OrderEventType, message: string, performedBy: string) {
+  private async createOrderEvent(
+    orderId: string,
+    eventType: OrderEventType,
+    message: string,
+    // performedBy is a uuid column (nullable). System-generated events must
+    // pass null, NOT a string like 'SYSTEM', which would fail uuid validation.
+    performedBy: string | null = null,
+  ) {
     const event = this.orderEventRepository.create({
       orderId,
       eventType,
       message,
       performedBy,
+      performedByRole: performedBy ? undefined : 'SYSTEM',
     });
     await this.orderEventRepository.save(event);
   }
