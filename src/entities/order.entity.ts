@@ -1,6 +1,6 @@
 import { Entity, Column, Index, ManyToOne, JoinColumn, OneToMany, OneToOne } from 'typeorm';
 import { BaseEntity } from '../common/entities/base.entity';
-import { OrderStatus, OrderType } from '../common/enums';
+import { OrderStatus, OrderType, OrderPaymentMode } from '../common/enums';
 import { User } from './user.entity';
 import { Vehicle } from './vehicle.entity';
 import { VehicleType } from './vehicle-type.entity';
@@ -40,6 +40,19 @@ export class Order extends BaseEntity {
     default: OrderStatus.CREATED,
   })
   status: OrderStatus;
+
+  // How the order is paid for. PREPAID orders are only dispatched after a
+  // successful payment; PAY_ON_DELIVERY (goods only) dispatch immediately.
+  @Column({
+    type: 'enum',
+    enum: OrderPaymentMode,
+    default: OrderPaymentMode.PREPAID,
+  })
+  paymentMode: OrderPaymentMode;
+
+  // Set true once a PREPAID order's payment succeeds (or POD order is settled).
+  @Column({ type: 'boolean', default: false })
+  isPaid: boolean;
 
   // Pickup details
   @Column({ type: 'text' })

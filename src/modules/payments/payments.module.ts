@@ -7,9 +7,10 @@ import { User } from '../../entities/user.entity';
 import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
 import { RealtimeModule } from '../realtime/realtime.module';
+import { DispatchModule } from '../dispatch/dispatch.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Payment, Order, OrderEvent, User]), RealtimeModule],
+  imports: [TypeOrmModule.forFeature([Payment, Order, OrderEvent, User]), RealtimeModule, DispatchModule],
   controllers: [PaymentsController],
   providers: [PaymentsService],
   exports: [PaymentsService],

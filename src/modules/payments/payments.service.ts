@@ -9,9 +9,10 @@ import { Payment } from '../../entities/payment.entity';
 import { Order } from '../../entities/order.entity';
 import { OrderEvent } from '../../entities/order-event.entity';
 import { User } from '../../entities/user.entity';
-import { PaymentProvider, PaymentStatus, OrderEventType } from '../../common/enums';
+import { PaymentProvider, PaymentStatus, OrderEventType, OrderPaymentMode } from '../../common/enums';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { REALTIME_EVENTS } from '../realtime/realtime.events';
+import { DispatchService } from '../dispatch/dispatch.service';
 
 @Injectable()
 export class PaymentsService {
@@ -29,6 +30,7 @@ export class PaymentsService {
     private userRepository: Repository<User>,
     private configService: ConfigService,
     private realtime: RealtimeGateway,
+    private dispatchService: DispatchService,
   ) {
     const stripeKey = this.configService.get<string>('STRIPE_SECRET_KEY');
     if (!stripeKey) {
@@ -156,6 +158,24 @@ export class PaymentsService {
         'Payment completed successfully',
         'SYSTEM',
       );
+
+      // Mark the order paid and, for PREPAID orders that were held awaiting
+      // payment, hand off to the dispatch engine now (unless it's scheduled).
+      const paidOrder = await this.orderRepository.findOne({ where: { id: payment.orderId } });
+      if (paidOrder && !paidOrder.isPaid) {
+        paidOrder.isPaid = true;
+        await this.orderRepository.save(paidOrder);
+
+        const shouldDispatch =
+          paidOrder.paymentMode === OrderPaymentMode.PREPAID &&
+          !paidOrder.isScheduled &&
+          !paidOrder.driverId;
+        if (shouldDispatch) {
+          this.dispatchService
+            .dispatchOrder(paidOrder.id)
+            .catch((err) => this.logger.error(`dispatchOrder after payment failed: ${err.message}`));
+        }
+      }
 
       await this.emitPaymentSuccess(payment.orderId, payment.reference, Number(payment.amount));
 

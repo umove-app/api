@@ -11,7 +11,7 @@ import { PricingService } from '../pricing/pricing.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { CancelOrderDto } from './dto/cancel-order.dto';
 import { GetOrdersDto } from './dto/get-orders.dto';
-import { OrderStatus, OrderEventType, DriverAvailabilityStatus, UserRole, DriverKycStatus } from '../../common/enums';
+import { OrderStatus, OrderType, OrderEventType, DriverAvailabilityStatus, UserRole, DriverKycStatus, OrderPaymentMode } from '../../common/enums';
 import { DispatchService } from '../dispatch/dispatch.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { REALTIME_EVENTS } from '../realtime/realtime.events';
@@ -53,10 +53,20 @@ export class OrdersService {
       promoCode: dto.promoCode,
     });
 
+    // Determine payment mode. Passenger orders MUST be prepaid; only goods may
+    // choose pay-on-delivery. Default to PREPAID when unspecified.
+    const requestedMode = dto.paymentMode ?? OrderPaymentMode.PREPAID;
+    const paymentMode =
+      dto.orderType === OrderType.PASSENGER
+        ? OrderPaymentMode.PREPAID
+        : requestedMode;
+
     // Create order
     const order = this.orderRepository.create({
       customerId: userId,
       orderType: dto.orderType,
+      paymentMode,
+      isPaid: false,
       pickupAddress: dto.pickupAddress,
       pickupLatitude: dto.pickupLatitude,
       pickupLongitude: dto.pickupLongitude,
@@ -92,13 +102,17 @@ export class OrdersService {
       await this.incrementPromoUsage(dto.promoCode);
     }
 
-    // Dispatch:
-    //  - preferred driver: direct assignment + offer.
-    //  - scheduled order: dispatch is deferred (handled when due); skip for now.
-    //  - otherwise: hand off to the dispatch engine (expanding-radius offers).
-    if (dto.preferredDriverId) {
+    // Dispatch gating:
+    //  - PREPAID orders are NOT dispatched until payment succeeds (dispatch is
+    //    triggered from the payment-verification flow). The client must call
+    //    the payment endpoints before the order is offered to drivers.
+    //  - PAY_ON_DELIVERY (goods) orders dispatch immediately.
+    //  - scheduled orders are deferred (handled when due), regardless of mode.
+    const awaitingPayment = paymentMode === OrderPaymentMode.PREPAID;
+
+    if (dto.preferredDriverId && !awaitingPayment) {
       await this.assignDriver(savedOrder.id, dto.preferredDriverId, userId);
-    } else if (!dto.scheduledAt) {
+    } else if (!dto.scheduledAt && !awaitingPayment) {
       // Fire-and-forget: dispatch proceeds asynchronously via realtime offers.
       this.dispatchService
         .dispatchOrder(savedOrder.id)

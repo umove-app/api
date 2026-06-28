@@ -1,12 +1,21 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsNotEmpty, IsString, IsNumber, IsEnum, IsOptional, IsDateString } from 'class-validator';
-import { OrderType } from '../../../common/enums';
+import { OrderType, OrderPaymentMode } from '../../../common/enums';
 
 export class CreateOrderDto {
   @ApiProperty({ enum: OrderType, example: OrderType.MOVE_TRANSPORT })
   @IsEnum(OrderType)
   @IsNotEmpty()
   orderType: OrderType;
+
+  @ApiPropertyOptional({
+    enum: OrderPaymentMode,
+    description:
+      'PREPAID (default; required for passenger orders) or PAY_ON_DELIVERY (goods only).',
+  })
+  @IsEnum(OrderPaymentMode)
+  @IsOptional()
+  paymentMode?: OrderPaymentMode;
 
   @ApiProperty({ example: '123 Main Street, Lagos' })
   @IsString()
