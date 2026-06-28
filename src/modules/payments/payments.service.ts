@@ -329,7 +329,13 @@ export class PaymentsService {
     email: string,
     callbackUrl?: string,
   ) {
-    const paystackSecretKey = this.configService.get<string>('PAYSTACK_SECRET_KEY');
+    // Strip accidental surrounding quotes/whitespace (a common env-var mistake
+    // where the value is pasted as "sk_test_..." including the quotes, which
+    // Paystack then rejects as an Invalid key).
+    const paystackSecretKey = this.configService
+      .get<string>('PAYSTACK_SECRET_KEY', '')
+      .trim()
+      .replace(/^["']|["']$/g, '');
 
     if (!paystackSecretKey) {
       this.logger.error('PAYSTACK_SECRET_KEY is not configured');
