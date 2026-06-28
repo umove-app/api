@@ -457,9 +457,9 @@ export class PaymentsService {
       orderId,
       eventType,
       message,
-      performedBy,
+      performedBy: performedBy ?? undefined,
       performedByRole: performedBy ? undefined : 'SYSTEM',
-    });
+    } as Partial<OrderEvent>);
     await this.orderEventRepository.save(event);
   }
 
