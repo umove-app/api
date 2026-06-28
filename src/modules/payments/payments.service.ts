@@ -331,6 +331,13 @@ export class PaymentsService {
   ) {
     const paystackSecretKey = this.configService.get<string>('PAYSTACK_SECRET_KEY');
 
+    if (!paystackSecretKey) {
+      this.logger.error('PAYSTACK_SECRET_KEY is not configured');
+      throw new BadRequestException(
+        'Payment provider is not configured. Please contact support.',
+      );
+    }
+
     try {
       const response = await axios.post(
         'https://api.paystack.co/transaction/initialize',
@@ -351,8 +358,11 @@ export class PaymentsService {
 
       return response.data.data;
     } catch (error) {
-      this.logger.error('Paystack initialization error:', error.response?.data || error.message);
-      throw new BadRequestException('Failed to initialize Paystack payment');
+      const paystackMessage =
+        error.response?.data?.message || error.message || 'Unknown error';
+      this.logger.error(`Paystack initialization error: ${paystackMessage}`, error.response?.data);
+      // Surface the real Paystack reason to the client so failures are actionable.
+      throw new BadRequestException(`Failed to initialize payment: ${paystackMessage}`);
     }
   }
 
