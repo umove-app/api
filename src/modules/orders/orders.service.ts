@@ -537,6 +537,21 @@ export class OrdersService {
     // Broadcast the status change in real time to the customer + order room.
     this.emitOrderStatus(order.customerId, orderId, status, result);
 
+    // Goods arrival: when a goods delivery reaches its destination, send the
+    // sender a dedicated arrival alert (in addition to the generic status).
+    if (status === OrderStatus.DELIVERED && order.orderType === OrderType.GOODS) {
+      const arrivalPayload = {
+        orderId,
+        status,
+        orderType: order.orderType,
+        destinationAddress: order.destinationAddress,
+        message: 'Your goods have arrived at the destination.',
+        arrivedAt: now.toISOString(),
+      };
+      this.realtime.emitToUser(order.customerId, REALTIME_EVENTS.ORDER_ARRIVED, arrivalPayload);
+      this.realtime.emitToOrder(orderId, REALTIME_EVENTS.ORDER_ARRIVED, arrivalPayload);
+    }
+
     return result;
   }
 
