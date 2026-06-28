@@ -11,7 +11,7 @@ import { PricingService } from '../pricing/pricing.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { CancelOrderDto } from './dto/cancel-order.dto';
 import { GetOrdersDto } from './dto/get-orders.dto';
-import { OrderStatus, OrderEventType, DriverAvailabilityStatus, UserRole } from '../../common/enums';
+import { OrderStatus, OrderEventType, DriverAvailabilityStatus, UserRole, DriverKycStatus } from '../../common/enums';
 import { DispatchService } from '../dispatch/dispatch.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { REALTIME_EVENTS } from '../realtime/realtime.events';
@@ -324,6 +324,16 @@ export class OrdersService {
   }
 
   async acceptOrder(orderId: string, driverId: string) {
+    // Only KYC-approved drivers may accept orders.
+    const driverProfile = await this.driverProfileRepository.findOne({
+      where: { userId: driverId },
+    });
+    if (!driverProfile || driverProfile.kycStatus !== DriverKycStatus.APPROVED) {
+      throw new ForbiddenException(
+        'Your account must be verified before you can accept orders',
+      );
+    }
+
     const order = await this.orderRepository.findOne({
       where: { id: orderId },
       relations: ['customer'],
